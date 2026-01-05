@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Likable App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root">Loading...</div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyCUmSdvU1hySBGI_mHSzrNi3BqsaPhiLOg",
+          authDomain: "scans-online.firebaseapp.com",
+          databaseURL: "https://scans-online-default-rtdb.europe-west1.firebasedatabase.app",
+          projectId: "scans-online",
+          storageBucket: "scans-online.firebasestorage.app",
+          messagingSenderId: "469268412222",
+          appId: "1:469268412222:web:52a45b018150f490891e6f"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        function getUserId() {
+          let id = sessionStorage.getItem('userId');
+          if (!id) {
+            id = 'user_' + Date.now();
+            sessionStorage.setItem('userId', id);
+          }
+          return id;
+        }
+
+        const EMOJIS = {
+          appearance: ['👨', '👩', '🧑', '👴', '👵', '👶'],
+          activity: ['☕', '📚', '💻', '🎧', '🎨', '🍕'],
+          mood: ['😊', '🤗', '😎', '🤓', '🙂', '😌']
+        };
+
+        function App() {
+          const [screen, setScreen] = useState('home');
+          const [userId] = useState(getUserId());
+          const [myEmojis, setMyEmojis] = useState([]);
+          const [category, setCategory] = useState('appearance');
+          const [ambassadors, setAmbassadors] = useState([]);
+          const [requests, setRequests] = useState([]);
+          const [selected, setSelected] = useState(null);
+
+          useEffect(() => {
+            if (screen === 'applicant') {
+              const ref = db.ref('ambassadors');
+              ref.on('value', snap => {
+                const data = snap.val();
+                if (data) {
+                  const list = Object.keys(data)
+                    .filter(k => k !== userId)
+                    .map(k => ({ id: k, ...data[k] }));
+                  setAmbassadors(list);
+                }
+              });
+              return () => ref.off();
+            }
+          }, [screen, userId]);
+
+          useEffect(() => {
+            if (screen === 'ambassador') {
+              const ref = db.ref('requests/' + userId);
+              ref.on('value', snap => {
+                const data = snap.val();
+                if (data) {
+                  const list = Object.keys(data).map(k => ({ id: k, ...data[k] }));
+                  setRequests(list);
+                }
+              });
+              return () => ref.off();
+            }
+          }, [screen, userId]);
+
+          useEffect(() => {
+            if (screen === 'pending') {
+              const ref = db.ref('connections/' + userId);
+              ref.on('value', snap => {
+                const data = snap.val();
+                if (data) {
+                  setSelected(data);
+                  setScreen('connected');
+                  ref.remove();
+                }
+              });
+              return () => ref.off();
+            }
+          }, [screen, userId]);
+
+          const becomeAmbassador = () => setScreen('setup');
+          const becomeApplicant = () => setScreen('applicant');
+
+          const saveAmbassador = () => {
+            if (myEmojis.length >= 3) {
+              db.ref('ambassadors/' + userId).set({
+                emojis: myEmojis,
+                time: Date.now()
+              });
+              setScreen('ambassador');
+            }
+          };
+
+          const sendRequest = (amb) => {
+            db.ref('requests/' + amb.id + '/' + userId).set({
+              from: userId,
+              time: Date.now()
+            });
+            setSelected(amb);
+            setScreen('pending');
+          };
+
+          const acceptRequest = (req) => {
+            db.ref('connections/' + req.from).set({
+              emojis: myEmojis,
+              time: Date.now()
+            });
+            db.ref('requests/' + userId + '/' + req.id).remove();
+            setScreen('connected');
+          };
+
+          if (screen === 'home') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-orange-100 to-green-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8 text-center">
+                  <div className="text-8xl mb-6">✋</div>
+                  <h1 className="text-4xl font-bold mb-4">Likable</h1>
+                  <p className="text-gray-600 mb-8">Connect with people nearby</p>
+                  <button onClick={becomeApplicant} className="w-full bg-green-500 text-white py-4 rounded-xl mb-3 font-bold hover:bg-green-600">
+                    I'm Looking 🔍
+                  </button>
+                  <button onClick={becomeAmbassador} className="w-full bg-purple-500 text-white py-4 rounded-xl font-bold hover:bg-purple-600">
+                    I'm Available 👋
+                  </button>
+                  <p className="text-xs text-gray-400 mt-4">ID: {userId.slice(-8)}</p>
+                </div>
+              </div>
+            );
+          }
+
+          if (screen === 'setup') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-purple-100 to-blue-100 p-4">
+                <div className="max-w-md mx-auto bg-white rounded-3xl p-8">
+                  <h2 className="text-2xl font-bold mb-4">Choose Your Emojis</h2>
+                  <p className="text-gray-600 mb-6">Select 3-5 emojis</p>
+                  
+                  <div className="bg-purple-50 rounded-xl p-6 mb-6 min-h-[100px] flex flex-wrap gap-3 justify-center">
+                    {myEmojis.length === 0 ? (
+                      <p className="text-gray-400">Select emojis below</p>
+                    ) : (
+                      myEmojis.map((e, i) => (
+                        <button key={i} onClick={() => setMyEmojis(myEmojis.filter(x => x !== e))} className="text-4xl bg-white rounded-xl p-2 shadow">
+                          {e}
+                        </button>
+                      ))
+                    )}
+                  </div>
+
+                  <p className="text-center mb-4">{myEmojis.length}/5 selected</p>
+
+                  <div className="flex gap-2 mb-4">
+                    {Object.keys(EMOJIS).map(cat => (
+                      <button key={cat} onClick={() => setCategory(cat)} className={`px-4 py-2 rounded-lg ${category === cat ? 'bg-purple-500 text-white' : 'bg-gray-200'}`}>
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-6 gap-3 mb-6">
+                    {EMOJIS[category].map((e, i) => (
+                      <button key={i} onClick={() => myEmojis.length < 5 && !myEmojis.includes(e) && setMyEmojis([...myEmojis, e])} className="text-3xl p-3 bg-gray-50 rounded-xl hover:bg-purple-50">
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button onClick={saveAmbassador} disabled={myEmojis.length < 3} className={`w-full py-4 rounded-xl font-bold ${myEmojis.length >= 3 ? 'bg-purple-500 text-white' : 'bg-gray-300 text-gray-500'}`}>
+                    Save & Become Ambassador
+                  </button>
+                </div>
+              </div>
+            );
+          }
+
+          if (screen === 'applicant') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-green-100 to-orange-100 p-4">
+                <div className="max-w-md mx-auto">
+                  <div className="bg-white rounded-3xl p-6 mb-4">
+                    <h2 className="text-2xl font-bold mb-4">Ambassadors Nearby</h2>
+                    <p className="text-gray-600">Found: {ambassadors.length}</p>
+                  </div>
+
+                  {ambassadors.length === 0 ? (
+                    <div className="bg-white rounded-3xl p-8 text-center">
+                      <div className="text-6xl mb-4">👀</div>
+                      <p className="text-gray-600">No ambassadors yet</p>
+                      <p className="text-sm text-gray-400 mt-2">Open another device and become one!</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {ambassadors.map(amb => (
+                        <button key={amb.id} onClick={() => sendRequest(amb)} className="w-full bg-white rounded-2xl p-4 flex items-center gap-4 hover:shadow-lg">
+                          <div className="text-3xl">{amb.emojis[0]}</div>
+                          <div className="flex-1 text-left">
+                            <p className="font-bold">{amb.emojis.join(' ')}</p>
+                            <p className="text-sm text-gray-600">Nearby</p>
+                          </div>
+                          <div className="text-2xl">✋</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <button onClick={() => setScreen('home')} className="w-full mt-4 bg-gray-200 py-3 rounded-xl">Back</button>
+                </div>
+              </div>
+            );
+          }
+
+          if (screen === 'ambassador') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-green-100 to-teal-100 p-4">
+                <div className="max-w-md mx-auto">
+                  <div className="bg-white rounded-3xl p-6 mb-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-xl font-bold">Ambassador Mode</h2>
+                      <div className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm flex items-center gap-2">
+                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                        Active
+                      </div>
+                    </div>
+                    <div className="bg-green-50 rounded-xl p-4">
+                      <p className="text-sm text-gray-600 mb-2">Your Profile:</p>
+                      <p className="text-4xl">{myEmojis.join(' ')}</p>
+                    </div>
+                  </div>
+
+                  {requests.length > 0 ? (
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-bold px-2">🔔 Requests ({requests.length})</h3>
+                      {requests.map(req => (
+                        <div key={req.id} className="bg-white rounded-2xl p-4 flex items-center gap-4">
+                          <div className="w-14 h-14 bg-green-400 rounded-full flex items-center justify-center text-2xl">👋</div>
+                          <div className="flex-1">
+                            <p className="font-bold">Someone wants to meet!</p>
+                            <p className="text-sm text-gray-600">Waiting for you</p>
+                          </div>
+                          <button onClick={() => acceptRequest(req)} className="px-5 py-2 bg-green-500 text-white rounded-xl font-bold">
+                            Accept
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-2xl p-8 text-center">
+                      <div className="text-6xl mb-4">📡</div>
+                      <p className="text-gray-600">Waiting for applicants...</p>
+                    </div>
+                  )}
+
+                  <button onClick={() => {
+                    db.ref('ambassadors/' + userId).remove();
+                    setScreen('home');
+                  }} className="w-full mt-4 bg-gray-200 py-3 rounded-xl">Leave</button>
+                </div>
+              </div>
+            );
+          }
+
+          if (screen === 'pending') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-orange-100 to-green-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-3xl p-8 text-center">
+                  <div className="text-6xl mb-6 animate-pulse">⏳</div>
+                  <h2 className="text-2xl font-bold mb-4">Requesting...</h2>
+                  <p className="text-gray-600 mb-6">Waiting for them to accept</p>
+                  <div className="bg-gray-50 rounded-xl p-6">
+                    <p className="text-4xl">{selected?.emojis?.join(' ')}</p>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          if (screen === 'connected') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-orange-100 to-green-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-3xl p-8 text-center">
+                  <div className="text-6xl mb-6">✅</div>
+                  <h2 className="text-3xl font-bold mb-4">Connected! 🎉</h2>
+                  <p className="text-gray-600 mb-8">You're matched!</p>
+                  
+                  <div className="bg-gradient-to-r from-green-50 to-orange-50 rounded-xl p-6 mb-6">
+                    <p className="text-5xl mb-3">{selected?.emojis?.join(' ')}</p>
+                    <p className="text-gray-600">Look for these emojis!</p>
+                  </div>
+
+                  <button onClick={() => setScreen('home')} className="w-full bg-gradient-to-r from-green-500 to-orange-500 text-white font-bold py-4 rounded-xl">
+                    Done! ✨
+                  </button>
+                </div>
+              </div>
+            );
+          }
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
