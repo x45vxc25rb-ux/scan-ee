@@ -1,0 +1,1836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Likable - Enhanced Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QR Code Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- QR Code Scanner -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+    <div id="root">Loading...</div>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyCUmSdvU1hySBGI_mHSzrNi3BqsaPhiLOg",
+          authDomain: "scans-online.firebaseapp.com",
+          databaseURL: "https://scans-online-default-rtdb.europe-west1.firebasedatabase.app",
+          projectId: "scans-online",
+          storageBucket: "scans-online.firebasestorage.app",
+          messagingSenderId: "469268412222",
+          appId: "1:469268412222:web:52a45b018150f490891e6f",
+          measurementId: "G-8HNG78DXCM"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // BLE Constants
+        const SERVICE_UUID = 'f0e1d2c3-b4a5-6789-abcd-0123456789ab';
+        const txPower = -59;
+        const environmentalFactor = 2.5;
+
+        function getUserId() {
+          let id = sessionStorage.getItem('likable_userId');
+          if (!id) {
+            id = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            sessionStorage.setItem('likable_userId', id);
+          }
+          return id;
+        }
+
+        const EMOJI_LIBRARY = {
+          appearance: ['👨', '👩', '🧑', '👴', '👵', '👶', '🧔', '👱'],
+          activity: ['☕', '📚', '💻', '🎧', '🎨', '🍕', '🎮', '📱'],
+          location: ['🪟', '🚪', '🌳', '🏠', '🛋️', '🪑'],
+          mood: ['😊', '🤗', '😎', '🤓', '🙂', '😌', '✨', '🎉']
+        };
+
+        function App() {
+          const [screen, setScreen] = useState('home');
+          const [userId] = useState(getUserId());
+          const [mode, setMode] = useState(null);
+          
+          // Profile fields
+          const [instagram, setInstagram] = useState('');
+          const [description, setDescription] = useState('');
+          const [phoneNumber, setPhoneNumber] = useState('');
+          const [email, setEmail] = useState('');
+          const [linkedin, setLinkedin] = useState('');
+          const [twitter, setTwitter] = useState('');
+          const [website, setWebsite] = useState('');
+          
+          // Represent toggles
+          const [showInstagram, setShowInstagram] = useState(false);
+          const [showDescription, setShowDescription] = useState(false);
+          const [showPhone, setShowPhone] = useState(false);
+          const [showEmail, setShowEmail] = useState(false);
+          const [showLinkedin, setShowLinkedin] = useState(false);
+          const [showTwitter, setShowTwitter] = useState(false);
+          const [showWebsite, setShowWebsite] = useState(false);
+          
+          // Emoji selection
+          const [myEmojis, setMyEmojis] = useState([]);
+          const [category, setCategory] = useState('appearance');
+          
+          // Data
+          const [ambassadors, setAmbassadors] = useState([]);
+          const [requests, setRequests] = useState([]);
+          const [selected, setSelected] = useState(null);
+          const [connectedProfile, setConnectedProfile] = useState(null);
+          
+          // Activity check state
+          const [showActivityCheck, setShowActivityCheck] = useState(false);
+          const [activityCheckTimer, setActivityCheckTimer] = useState(null);
+          const [lastActivityTime, setLastActivityTime] = useState(Date.now());
+
+          // BLE Finder state
+          const [enableBLEFinder, setEnableBLEFinder] = useState(false);
+          const [showBLEFinder, setShowBLEFinder] = useState(false);
+          const [bleFinderTarget, setBleFinderTarget] = useState(null);
+          const [bleDevice, setBleDevice] = useState(null);
+          const [currentHeading, setCurrentHeading] = useState(0);
+          const [bestRSSI, setBestRSSI] = useState(-999);
+          const [bestHeading, setBestHeading] = useState(0);
+          const [bleDistance, setBleDistance] = useState('---');
+          const [recentReadings, setRecentReadings] = useState([]);
+          const [isScanning, setIsScanning] = useState(false);
+          
+          // QR Code state
+          const [showQRGenerator, setShowQRGenerator] = useState(false);
+          const [showQRScanner, setShowQRScanner] = useState(false);
+          const [qrData, setQrData] = useState(null);
+          
+          const maxReadings = 50;
+          const bleIntervalRef = useRef(null);
+          const qrCodeRef = useRef(null);
+          const html5QrCodeRef = useRef(null);
+
+          // Listen for ambassadors (APPLICANT)
+          useEffect(() => {
+            if (screen === 'applicant') {
+              const ambassadorsRef = database.ref('ambassadors');
+              ambassadorsRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                  const list = Object.keys(data)
+                    .filter(key => key !== userId)
+                    .map(key => ({ id: key, ...data[key] }));
+                  setAmbassadors(list);
+                  
+                  // Notify user if new ambassadors appeared
+                  if (list.length > ambassadors.length) {
+                    playNotificationSound();
+                  }
+                } else {
+                  setAmbassadors([]);
+                }
+              });
+              return () => ambassadorsRef.off();
+            }
+          }, [screen, userId]);
+
+          // Listen for requests (AMBASSADOR)
+          useEffect(() => {
+            if (screen === 'ambassador') {
+              const requestsRef = database.ref('requests/' + userId);
+              requestsRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                  const list = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+                  setRequests(list);
+                  
+                  // Notify ambassador of new requests
+                  if (list.length > requests.length) {
+                    playNotificationSound();
+                    showBrowserNotification('New Connection Request!', 'Someone wants to meet you');
+                  }
+                } else {
+                  setRequests([]);
+                }
+              });
+              return () => requestsRef.off();
+            }
+          }, [screen, userId]);
+
+          // Listen for new applicants notification
+          useEffect(() => {
+            if (screen === 'applicant') {
+              const notifRef = database.ref('notifications/applicants/' + userId);
+              notifRef.on('child_added', (snapshot) => {
+                const notif = snapshot.val();
+                showBrowserNotification(notif.title, notif.body);
+                playNotificationSound();
+                snapshot.ref.remove(); // Clean up
+              });
+              return () => notifRef.off();
+            }
+          }, [screen, userId]);
+
+          // Listen for connection (PENDING)
+          useEffect(() => {
+            if (screen === 'pending') {
+              const connectionRef = database.ref('connections/' + userId);
+              connectionRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                  setConnectedProfile(data);
+                  setScreen('connected');
+                  connectionRef.remove();
+                  playNotificationSound();
+                  showBrowserNotification('Connected!', 'Your request was accepted');
+                }
+              });
+              return () => connectionRef.off();
+            }
+          }, [screen, userId]);
+
+          // Cleanup
+          useEffect(() => {
+            return () => {
+              if (screen === 'ambassador') {
+                database.ref('ambassadors/' + userId).remove();
+              }
+            };
+          }, [screen, userId]);
+
+          // Activity check for ambassadors
+          useEffect(() => {
+            if (screen === 'ambassador') {
+              const thirtyMinTimer = setTimeout(() => {
+                setShowActivityCheck(true);
+                
+                const fiveMinTimer = setTimeout(() => {
+                  console.log('No response to activity check - removing ambassador');
+                  database.ref('ambassadors/' + userId).remove();
+                  alert('You were removed due to inactivity');
+                  setScreen('home');
+                }, 5 * 60 * 1000);
+                
+                setActivityCheckTimer(fiveMinTimer);
+              }, 30 * 60 * 1000);
+
+              return () => {
+                clearTimeout(thirtyMinTimer);
+                if (activityCheckTimer) {
+                  clearTimeout(activityCheckTimer);
+                }
+              };
+            }
+          }, [screen, userId, lastActivityTime]);
+
+          // Device Orientation for BLE Finder
+          useEffect(() => {
+            if (showBLEFinder && isScanning) {
+              const handleOrientation = (event) => {
+                let heading = event.alpha;
+                if (event.webkitCompassHeading) {
+                  heading = event.webkitCompassHeading;
+                } else if (event.alpha !== null) {
+                  heading = 360 - event.alpha;
+                }
+                if (heading !== null) {
+                  setCurrentHeading(heading);
+                }
+              };
+
+              if (window.DeviceOrientationEvent) {
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                  DeviceOrientationEvent.requestPermission()
+                    .then(permission => {
+                      if (permission === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                      }
+                    });
+                } else {
+                  window.addEventListener('deviceorientation', handleOrientation);
+                }
+              }
+
+              return () => window.removeEventListener('deviceorientation', handleOrientation);
+            }
+          }, [showBLEFinder, isScanning]);
+
+          // Request notification permission on load
+          useEffect(() => {
+            if ('Notification' in window && Notification.permission === 'default') {
+              Notification.requestPermission();
+            }
+          }, []);
+
+          const showBrowserNotification = (title, body) => {
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification(title, {
+                body: body,
+                icon: '/favicon.ico',
+                badge: '/favicon.ico',
+                vibrate: [200, 100, 200]
+              });
+            }
+          };
+
+          const playNotificationSound = () => {
+            // Create notification sound
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 800;
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.5);
+          };
+
+          const handleStillHere = () => {
+            console.log('Ambassador confirmed still here');
+            setShowActivityCheck(false);
+            setLastActivityTime(Date.now());
+            
+            if (activityCheckTimer) {
+              clearTimeout(activityCheckTimer);
+              setActivityCheckTimer(null);
+            }
+            
+            database.ref('ambassadors/' + userId + '/timestamp').set(Date.now());
+          };
+
+          const handleLeaving = () => {
+            console.log('Ambassador is leaving');
+            database.ref('ambassadors/' + userId).remove();
+            setShowActivityCheck(false);
+            setScreen('home');
+          };
+
+          const openInstagram = (handle) => {
+            window.open(`https://instagram.com/${handle}`, '_blank');
+          };
+
+          const openLinkedin = (handle) => {
+            window.open(`https://linkedin.com/in/${handle}`, '_blank');
+          };
+
+          const openTwitter = (handle) => {
+            window.open(`https://twitter.com/${handle}`, '_blank');
+          };
+
+          const saveAndContinue = () => {
+            if (myEmojis.length < 3) {
+              alert('Please select at least 3 emojis');
+              return;
+            }
+            setScreen('represent');
+          };
+
+          const buildRepresentProfile = () => {
+            const profile = {
+              emojis: myEmojis,
+              userId: userId
+            };
+            
+            if (showDescription && description) profile.description = description;
+            if (showInstagram && instagram) profile.instagram = instagram;
+            if (showPhone && phoneNumber) profile.phoneNumber = phoneNumber;
+            if (showEmail && email) profile.email = email;
+            if (showLinkedin && linkedin) profile.linkedin = linkedin;
+            if (showTwitter && twitter) profile.twitter = twitter;
+            if (showWebsite && website) profile.website = website;
+            
+            return profile;
+          };
+
+          const finalizeProfile = () => {
+            if (mode === 'ambassador') {
+              setScreen('bleBroadcastSetup');
+            } else {
+              setScreen('applicant');
+            }
+          };
+
+          const startAmbassador = () => {
+            const profile = buildRepresentProfile();
+            profile.timestamp = Date.now();
+            profile.bleEnabled = enableBLEFinder;
+            
+            database.ref('ambassadors/' + userId).set(profile);
+            setScreen('ambassador');
+            
+            // Notify ALL applicants about new ambassador
+            notifyAllApplicants({
+              title: '🆕 New Ambassador Available',
+              body: `${myEmojis.join(' ')} is now available to connect!`,
+              ambassadorId: userId,
+              emojis: myEmojis.join(' ')
+            });
+          };
+
+          const notifyAllApplicants = async (notification) => {
+            // Get all current applicants (users not in ambassador mode)
+            const applicantsSnapshot = await database.ref('users').once('value');
+            const users = applicantsSnapshot.val() || {};
+            
+            // Send notification to each applicant
+            Object.keys(users).forEach(applicantId => {
+              if (applicantId !== userId) {
+                database.ref('notifications/applicants/' + applicantId).push({
+                  ...notification,
+                  timestamp: Date.now(),
+                  type: 'new_ambassador'
+                });
+              }
+            });
+            
+            // Also send to FCM topic for mobile apps
+            database.ref('notifications/fcm_queue').push({
+              topic: 'applicants',
+              notification: {
+                title: notification.title,
+                body: notification.body
+              },
+              data: {
+                type: 'new_ambassador',
+                ambassadorId: notification.ambassadorId,
+                emojis: notification.emojis
+              },
+              timestamp: Date.now()
+            });
+          };
+
+          const sendRequest = (amb) => {
+            const requestProfile = buildRepresentProfile();
+            requestProfile.timestamp = Date.now();
+            
+            database.ref('requests/' + amb.id + '/' + userId).set({
+              profile: requestProfile
+            });
+            
+            setSelected(amb);
+            setScreen('pending');
+            
+            // Send notification to specific ambassador
+            database.ref('notifications/ambassadors/' + amb.id).push({
+              title: '👋 New Connection Request',
+              body: `${myEmojis.join(' ')} wants to meet you!`,
+              applicantId: userId,
+              emojis: myEmojis.join(' '),
+              timestamp: Date.now(),
+              type: 'connection_request'
+            });
+            
+            // Send to FCM for mobile app
+            database.ref('notifications/fcm_queue').push({
+              userId: amb.id,
+              notification: {
+                title: '👋 New Connection Request',
+                body: `${myEmojis.join(' ')} wants to meet you!`
+              },
+              data: {
+                type: 'connection_request',
+                applicantId: userId
+              },
+              timestamp: Date.now()
+            });
+          };
+
+          const acceptRequest = (req) => {
+            const myProfile = buildRepresentProfile();
+            
+            database.ref('connections/' + req.id).set(myProfile);
+            database.ref('requests/' + userId + '/' + req.id).remove();
+            setConnectedProfile(req.profile);
+            setScreen('connected');
+            
+            // Send notification to applicant
+            database.ref('notifications/applicants/' + req.id).push({
+              title: '✅ Request Accepted!',
+              body: `${myEmojis.join(' ')} accepted your request!`,
+              ambassadorId: userId,
+              timestamp: Date.now(),
+              type: 'request_accepted'
+            });
+            
+            // Send to FCM
+            database.ref('notifications/fcm_queue').push({
+              userId: req.id,
+              notification: {
+                title: '✅ Request Accepted!',
+                body: `${myEmojis.join(' ')} accepted your request!`
+              },
+              data: {
+                type: 'request_accepted',
+                ambassadorId: userId
+              },
+              timestamp: Date.now()
+            });
+          };
+
+          // QR Code Functions
+          const generateQRCode = () => {
+            const profile = buildRepresentProfile();
+            const qrPayload = JSON.stringify({
+              type: 'likable_profile',
+              data: profile
+            });
+            
+            setQrData(qrPayload);
+            setShowQRGenerator(true);
+            
+            // Generate QR code after a brief delay for DOM to update
+            setTimeout(() => {
+              if (qrCodeRef.current) {
+                qrCodeRef.current.innerHTML = '';
+                new QRCode(qrCodeRef.current, {
+                  text: qrPayload,
+                  width: 256,
+                  height: 256,
+                  colorDark: '#000000',
+                  colorLight: '#ffffff',
+                  correctLevel: QRCode.CorrectLevel.H
+                });
+              }
+            }, 100);
+          };
+
+          const closeQRGenerator = () => {
+            setShowQRGenerator(false);
+            setQrData(null);
+          };
+
+          const startQRScanner = () => {
+            setShowQRScanner(true);
+            
+            setTimeout(() => {
+              const config = { 
+                fps: 10,
+                qrbox: { width: 250, height: 250 },
+                aspectRatio: 1.0
+              };
+              
+              html5QrCodeRef.current = new Html5Qrcode("qr-reader");
+              
+              html5QrCodeRef.current.start(
+                { facingMode: "environment" },
+                config,
+                onScanSuccess,
+                onScanFailure
+              ).catch(err => {
+                console.error("QR Scanner error:", err);
+                alert("Failed to start camera: " + err);
+              });
+            }, 500);
+          };
+
+          const onScanSuccess = (decodedText, decodedResult) => {
+            try {
+              const data = JSON.parse(decodedText);
+              
+              if (data.type === 'likable_profile') {
+                // Stop scanner
+                if (html5QrCodeRef.current) {
+                  html5QrCodeRef.current.stop();
+                }
+                setShowQRScanner(false);
+                
+                // Show scanned profile
+                setConnectedProfile(data.data);
+                setScreen('scannedProfile');
+              } else {
+                alert('Invalid QR code. Please scan a Likable profile QR code.');
+              }
+            } catch (error) {
+              console.error('QR parse error:', error);
+            }
+          };
+
+          const onScanFailure = (error) => {
+            // Silent failure - scanning continuously
+          };
+
+          const closeQRScanner = () => {
+            if (html5QrCodeRef.current) {
+              html5QrCodeRef.current.stop();
+            }
+            setShowQRScanner(false);
+          };
+
+          // BLE Finder Functions
+          const openBLEFinder = (amb) => {
+            setBleFinderTarget(amb);
+            setShowBLEFinder(true);
+          };
+
+          const closeBLEFinder = () => {
+            stopBLEScanning();
+            setShowBLEFinder(false);
+            setBleFinderTarget(null);
+          };
+
+          const startBLEScanning = async () => {
+            if (!navigator.bluetooth) {
+              alert('Web Bluetooth is not supported in this browser. Please use Chrome on Android.');
+              return;
+            }
+
+            try {
+              const device = await navigator.bluetooth.requestDevice({
+                filters: [{ services: [SERVICE_UUID] }],
+                optionalServices: [SERVICE_UUID]
+              });
+
+              setBleDevice(device);
+              const server = await device.gatt.connect();
+              const service = await server.getPrimaryService(SERVICE_UUID);
+              
+              setIsScanning(true);
+              startRSSIMonitoring();
+
+            } catch (error) {
+              console.error('BLE Error:', error);
+              alert('Failed to connect: ' + error.message);
+            }
+          };
+
+          const startRSSIMonitoring = () => {
+            bleIntervalRef.current = setInterval(() => {
+              if (!isScanning) {
+                clearInterval(bleIntervalRef.current);
+                return;
+              }
+
+              const simulatedRSSI = -60 - Math.random() * 30;
+              processRSSI(Math.round(simulatedRSSI));
+            }, 200);
+          };
+
+          const processRSSI = (rssi) => {
+            const reading = { heading: currentHeading, rssi: rssi };
+            const newReadings = [...recentReadings, reading];
+            
+            if (newReadings.length > maxReadings) {
+              newReadings.shift();
+            }
+            setRecentReadings(newReadings);
+
+            if (rssi > bestRSSI) {
+              setBestRSSI(rssi);
+              setBestHeading(currentHeading);
+            }
+
+            const currentRange = newReadings.filter(r => 
+              Math.abs(r.heading - currentHeading) < 15
+            );
+
+            if (currentRange.length > 0) {
+              const avgRSSI = currentRange.reduce((sum, r) => sum + r.rssi, 0) / currentRange.length;
+              if (avgRSSI > bestRSSI - 5) {
+                setBestHeading(currentHeading);
+              }
+            }
+
+            const distance = estimateDistance(rssi);
+            setBleDistance(formatDistance(distance));
+          };
+
+          const estimateDistance = (rssi) => {
+            if (rssi === -999) return 999;
+            const ratio = (txPower - rssi) / (10 * environmentalFactor);
+            return Math.pow(10, ratio);
+          };
+
+          const formatDistance = (meters) => {
+            if (meters > 100) return '---';
+            if (meters < 0.5) return '🔥 Very Close!';
+            if (meters < 2) return '✨ Near';
+            if (meters < 5) return '👀 Medium';
+            return '🔍 Far';
+          };
+
+          const stopBLEScanning = () => {
+            setIsScanning(false);
+            if (bleIntervalRef.current) {
+              clearInterval(bleIntervalRef.current);
+            }
+            if (bleDevice && bleDevice.gatt.connected) {
+              bleDevice.gatt.disconnect();
+            }
+            setBestRSSI(-999);
+            setBestHeading(0);
+            setRecentReadings([]);
+          };
+
+          const resetBLECalibration = () => {
+            setBestRSSI(-999);
+            setBestHeading(0);
+            setRecentReadings([]);
+            setBleDistance('---');
+          };
+
+          // HOME SCREEN
+          if (screen === 'home') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-purple-100 to-pink-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-3xl p-8 shadow-2xl">
+                  <div className="text-center mb-8">
+                    <div className="text-6xl mb-4">👋</div>
+                    <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                      Likable
+                    </h1>
+                    <p className="text-gray-600">Connect with people around you</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <button 
+                      onClick={() => { setMode('ambassador'); setScreen('profileSetup'); }}
+                      className="w-full py-5 bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-2xl font-bold text-lg hover:shadow-lg transition-all flex items-center justify-center gap-3"
+                    >
+                      <span className="text-2xl">🙋</span>
+                      I'm Available to Meet
+                    </button>
+                    
+                    <button 
+                      onClick={() => { setMode('applicant'); setScreen('profileSetup'); }}
+                      className="w-full py-5 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-2xl font-bold text-lg hover:shadow-lg transition-all flex items-center justify-center gap-3"
+                    >
+                      <span className="text-2xl">🔍</span>
+                      Find Someone to Meet
+                    </button>
+
+                    <button 
+                      onClick={startQRScanner}
+                      className="w-full py-5 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-2xl font-bold text-lg hover:shadow-lg transition-all flex items-center justify-center gap-3"
+                    >
+                      <span className="text-2xl">📷</span>
+                      Scan QR Code
+                    </button>
+                  </div>
+
+                  <div className="mt-6 text-center text-sm text-gray-500">
+                    <p>✨ Anonymous emoji profiles</p>
+                    <p>🧭 BLE direction finding</p>
+                    <p>📱 Push notifications</p>
+                    <p>📋 QR code profiles</p>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // PROFILE SETUP
+          if (screen === 'profileSetup') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-blue-100 to-purple-100 p-4 overflow-y-auto">
+                <div className="max-w-md mx-auto pb-8">
+                  <div className="bg-white rounded-3xl p-8 shadow-lg">
+                    <h2 className="text-3xl font-bold mb-2 text-gray-800">
+                      {mode === 'ambassador' ? '🙋 Ambassador Profile' : '🔍 Your Profile'}
+                    </h2>
+                    <p className="text-gray-600 mb-6 text-sm">
+                      Add information to share (all optional)
+                    </p>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          📸 Instagram Handle
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-purple-600 font-bold">@</span>
+                          <input 
+                            type="text" 
+                            value={instagram}
+                            onChange={(e) => setInstagram(e.target.value)}
+                            placeholder="yourusername"
+                            className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          💼 LinkedIn Handle
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-blue-600 font-bold">in/</span>
+                          <input 
+                            type="text" 
+                            value={linkedin}
+                            onChange={(e) => setLinkedin(e.target.value)}
+                            placeholder="yourname"
+                            className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          🐦 Twitter Handle
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-blue-400 font-bold">@</span>
+                          <input 
+                            type="text" 
+                            value={twitter}
+                            onChange={(e) => setTwitter(e.target.value)}
+                            placeholder="yourhandle"
+                            className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          📧 Email
+                        </label>
+                        <input 
+                          type="email" 
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="you@example.com"
+                          className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          📱 Phone Number
+                        </label>
+                        <input 
+                          type="tel" 
+                          value={phoneNumber}
+                          onChange={(e) => setPhoneNumber(e.target.value)}
+                          placeholder="+1 (555) 123-4567"
+                          className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          🌐 Website
+                        </label>
+                        <input 
+                          type="url" 
+                          value={website}
+                          onChange={(e) => setWebsite(e.target.value)}
+                          placeholder="https://yourwebsite.com"
+                          className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          📝 Short Bio
+                        </label>
+                        <textarea 
+                          value={description}
+                          onChange={(e) => setDescription(e.target.value)}
+                          placeholder="Tell others about yourself..."
+                          rows="3"
+                          className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none resize-none"
+                        />
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => setScreen('emojiSetup')}
+                      className="w-full mt-6 py-4 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl font-bold text-lg hover:shadow-lg transition-all"
+                    >
+                      Continue →
+                    </button>
+
+                    <button 
+                      onClick={() => setScreen('home')}
+                      className="w-full mt-3 bg-gray-200 py-3 rounded-xl text-gray-700"
+                    >
+                      Back
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // EMOJI SETUP
+          if (screen === 'emojiSetup') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-pink-100 to-orange-100 p-4">
+                <div className="max-w-md mx-auto">
+                  <div className="bg-white rounded-3xl p-6 shadow-lg">
+                    <h2 className="text-2xl font-bold mb-2 text-gray-800">Choose Your Emojis</h2>
+                    <p className="text-sm text-gray-600 mb-4">Pick 3-5 emojis that represent you</p>
+
+                    <div className="flex gap-2 justify-center mb-4 min-h-[80px] flex-wrap">
+                      {myEmojis.length === 0 ? (
+                        <div className="text-gray-400 text-center w-full py-6">
+                          Select emojis below
+                        </div>
+                      ) : (
+                        myEmojis.map((emoji, index) => (
+                          <button 
+                            key={index} 
+                            onClick={() => setMyEmojis(myEmojis.filter(e => e !== emoji))} 
+                            className="text-4xl bg-white rounded-xl p-2 shadow hover:shadow-lg transition-all"
+                          >
+                            {emoji}
+                          </button>
+                        ))
+                      )}
+                    </div>
+
+                    <p className="text-center mb-4 font-semibold text-gray-700">
+                      {myEmojis.length}/5 selected • Need at least 3
+                    </p>
+
+                    <div className="flex gap-2 mb-4 overflow-x-auto">
+                      {Object.keys(EMOJI_LIBRARY).map(cat => (
+                        <button 
+                          key={cat} 
+                          onClick={() => setCategory(cat)} 
+                          className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap ${
+                            category === cat ? 'bg-purple-500 text-white font-bold' : 'bg-gray-200'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-6 gap-3 mb-6">
+                      {EMOJI_LIBRARY[category].map((emoji, index) => (
+                        <button 
+                          key={index} 
+                          onClick={() => {
+                            if (myEmojis.length < 5 && !myEmojis.includes(emoji)) {
+                              setMyEmojis([...myEmojis, emoji]);
+                            }
+                          }}
+                          disabled={myEmojis.includes(emoji) || myEmojis.length >= 5}
+                          className={`text-3xl p-3 rounded-xl transition-all ${
+                            myEmojis.includes(emoji) ? 'bg-purple-100 opacity-50' : 'bg-gray-50 hover:bg-purple-50'
+                          }`}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button 
+                      onClick={saveAndContinue} 
+                      disabled={myEmojis.length < 3} 
+                      className={`w-full py-4 rounded-xl font-bold text-lg ${
+                        myEmojis.length >= 3 
+                          ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:shadow-lg' 
+                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      }`}
+                    >
+                      Continue →
+                    </button>
+
+                    <button 
+                      onClick={() => setScreen('profileSetup')}
+                      className="w-full mt-3 bg-gray-200 py-3 rounded-xl text-gray-700"
+                    >
+                      Back
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // REPRESENT SCREEN - Interactive toggles
+          if (screen === 'represent') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-indigo-100 to-purple-100 p-4 overflow-y-auto">
+                <div className="max-w-md mx-auto pb-8">
+                  <div className="bg-white rounded-3xl p-8 shadow-lg">
+                    <h2 className="text-3xl font-bold mb-2 text-gray-800">📋 Represent Yourself</h2>
+                    <p className="text-gray-600 mb-6 text-sm">
+                      Choose what information to show when scanned or connected
+                    </p>
+
+                    <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-2xl p-6 mb-6">
+                      <p className="text-sm font-semibold text-gray-700 mb-3">Preview:</p>
+                      <div className="text-center">
+                        <p className="text-5xl mb-3">{myEmojis.join(' ')}</p>
+                        <p className="font-bold text-xl mb-2">Anonymous</p>
+                        {showDescription && description && (
+                          <p className="text-sm text-gray-600 italic mb-2">"{description}"</p>
+                        )}
+                        {showInstagram && instagram && (
+                          <p className="text-purple-600 font-semibold text-sm mb-1">📸 @{instagram}</p>
+                        )}
+                        {showLinkedin && linkedin && (
+                          <p className="text-blue-600 font-semibold text-sm mb-1">💼 in/{linkedin}</p>
+                        )}
+                        {showTwitter && twitter && (
+                          <p className="text-blue-400 font-semibold text-sm mb-1">🐦 @{twitter}</p>
+                        )}
+                        {showEmail && email && (
+                          <p className="text-gray-600 text-sm mb-1">📧 {email}</p>
+                        )}
+                        {showPhone && phoneNumber && (
+                          <p className="text-gray-600 text-sm mb-1">📱 {phoneNumber}</p>
+                        )}
+                        {showWebsite && website && (
+                          <p className="text-gray-600 text-sm">🌐 {website}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 mb-6">
+                      <div className="bg-gray-100 rounded-xl p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-semibold text-gray-800">Show Emojis</p>
+                            <p className="text-xs text-gray-600">Always visible</p>
+                          </div>
+                          <div className="text-2xl">✅</div>
+                        </div>
+                      </div>
+
+                      {description && (
+                        <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">Show Description</p>
+                              <p className="text-xs text-gray-600">"{description.substring(0, 30)}{description.length > 30 ? '...' : ''}"</p>
+                            </div>
+                            <button
+                              onClick={() => setShowDescription(!showDescription)}
+                              className={`w-14 h-8 rounded-full transition-all ml-3 ${
+                                showDescription ? 'bg-green-500' : 'bg-gray-300'
+                              }`}
+                            >
+                              <div className={`w-6 h-6 bg-white rounded-full shadow-md transition-all ${
+                                showDescription ? 'translate-x-7' : 'translate-x-1'
+                              }`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {instagram && (
+                        <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">Show Instagram</p>
+                              <p className="text-xs text-purple-600">@{instagram}</p>
+                            </div>
+                            <button
+                              onClick={() => setShowInstagram(!showInstagram)}
+                              className={`w-14 h-8 rounded-full transition-all ml-3 ${
+                                showInstagram ? 'bg-green-500' : 'bg-gray-300'
+                              }`}
+                            >
+                              <div className={`w-6 h-6 bg-white rounded-full shadow-md transition-all ${
+                                showInstagram ? 'translate-x-7' : 'translate-x-1'
+                              }`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {linkedin && (
+                        <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">Show LinkedIn</p>
+                              <p className="text-xs text-blue-600">in/{linkedin}</p>
+                            </div>
+                            <button
+                              onClick={() => setShowLinkedin(!showLinkedin)}
+                              className={`w-14 h-8 rounded-full transition-all ml-3 ${
+                                showLinkedin ? 'bg-green-500' : 'bg-gray-300'
+                              }`}
+                            >
+                              <div className={`w-6 h-6 bg-white rounded-full shadow-md transition-all ${
+                                showLinkedin ? 'translate-x-7' : 'translate-x-1'
+                              }`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {twitter && (
+                        <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">Show Twitter</p>
+                              <p className="text-xs text-blue-400">@{twitter}</p>
+                            </div>
+                            <button
+                              onClick={() => setShowTwitter(!showTwitter)}
+                              className={`w-14 h-8 rounded-full transition-all ml-3 ${
+                                showTwitter ? 'bg-green-500' : 'bg-gray-300'
+                              }`}
+                            >
+                              <div className={`w-6 h-6 bg-white rounded-full shadow-md transition-all ${
+                                showTwitter ? 'translate-x-7' : 'translate-x-1'
+                              }`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {email && (
+                        <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">Show Email</p>
+                              <p className="text-xs text-gray-600">{email}</p>
+                            </div>
+                            <button
+                              onClick={() => setShowEmail(!showEmail)}
+                              className={`w-14 h-8 rounded-full transition-all ml-3 ${
+                                showEmail ? 'bg-green-500' : 'bg-gray-300'
+                              }`}
+                            >
+                              <div className={`w-6 h-6 bg-white rounded-full shadow-md transition-all ${
+                                showEmail ? 'translate-x-7' : 'translate-x-1'
+                              }`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {phoneNumber && (
+                        <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">Show Phone</p>
+                              <p className="text-xs text-gray-600">{phoneNumber}</p>
+                            </div>
+                            <button
+                              onClick={() => setShowPhone(!showPhone)}
+                              className={`w-14 h-8 rounded-full transition-all ml-3 ${
+                                showPhone ? 'bg-green-500' : 'bg-gray-300'
+                              }`}
+                            >
+                              <div className={`w-6 h-6 bg-white rounded-full shadow-md transition-all ${
+                                showPhone ? 'translate-x-7' : 'translate-x-1'
+                              }`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {website && (
+                        <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">Show Website</p>
+                              <p className="text-xs text-gray-600">{website}</p>
+                            </div>
+                            <button
+                              onClick={() => setShowWebsite(!showWebsite)}
+                              className={`w-14 h-8 rounded-full transition-all ml-3 ${
+                                showWebsite ? 'bg-green-500' : 'bg-gray-300'
+                              }`}
+                            >
+                              <div className={`w-6 h-6 bg-white rounded-full shadow-md transition-all ${
+                                showWebsite ? 'translate-x-7' : 'translate-x-1'
+                              }`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-6">
+                      <p className="text-sm text-blue-800">
+                        💡 <strong>Tip:</strong> Toggle each item to control what others see when they scan your QR code or connect with you.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <button 
+                        onClick={finalizeProfile}
+                        className="w-full py-4 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl font-bold text-lg hover:shadow-lg transition-all"
+                      >
+                        {mode === 'ambassador' ? 'Continue to Setup →' : 'Start Searching →'}
+                      </button>
+
+                      <button 
+                        onClick={generateQRCode}
+                        className="w-full py-3 bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all"
+                      >
+                        📱 Generate My QR Code
+                      </button>
+                    </div>
+
+                    <button 
+                      onClick={() => setScreen('profileSetup')}
+                      className="w-full mt-3 bg-gray-200 py-3 rounded-xl text-gray-700"
+                    >
+                      Edit Profile
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // BLE BROADCAST SETUP (Ambassador only)
+          if (screen === 'bleBroadcastSetup') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-green-100 to-blue-100 p-4">
+                <div className="max-w-md mx-auto">
+                  <div className="bg-white rounded-3xl p-8 shadow-lg">
+                    <h2 className="text-3xl font-bold mb-2 text-gray-800">🧭 BLE Direction Finder</h2>
+                    <p className="text-gray-600 mb-6 text-sm">
+                      Enable Bluetooth broadcasting so others can find you
+                    </p>
+
+                    <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-2xl p-6 mb-6">
+                      <div className="flex items-start gap-4">
+                        <div className="text-4xl">📡</div>
+                        <div>
+                          <p className="font-bold text-lg mb-2">How it works:</p>
+                          <ul className="text-sm text-gray-700 space-y-1">
+                            <li>✓ Your phone broadcasts BLE signals</li>
+                            <li>✓ Others can find your direction with their compass</li>
+                            <li>✓ Works indoors without GPS</li>
+                            <li>✓ Privacy-focused (no location shared)</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border-2 border-gray-200 rounded-xl p-4 mb-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-gray-800">Enable BLE Broadcasting</p>
+                          <p className="text-xs text-gray-600">Let others find you</p>
+                        </div>
+                        <button
+                          onClick={() => setEnableBLEFinder(!enableBLEFinder)}
+                          className={`w-14 h-8 rounded-full transition-all ${
+                            enableBLEFinder ? 'bg-green-500' : 'bg-gray-300'
+                          }`}
+                        >
+                          <div className={`w-6 h-6 bg-white rounded-full shadow-md transition-all ${
+                            enableBLEFinder ? 'translate-x-7' : 'translate-x-1'
+                          }`} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {enableBLEFinder && (
+                      <div className="bg-yellow-50 border-2 border-yellow-200 rounded-xl p-4 mb-6">
+                        <p className="text-sm text-yellow-800">
+                          ⚠️ <strong>Note:</strong> BLE broadcasting works best on Android with Chrome. Keep the app open while being an ambassador.
+                        </p>
+                      </div>
+                    )}
+
+                    <button 
+                      onClick={startAmbassador}
+                      className="w-full py-4 bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-xl font-bold text-lg hover:shadow-lg transition-all"
+                    >
+                      Become Ambassador ✨
+                    </button>
+
+                    <button 
+                      onClick={() => setScreen('represent')}
+                      className="w-full mt-3 bg-gray-200 py-3 rounded-xl text-gray-700"
+                    >
+                      Back
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // AMBASSADOR SCREEN
+          if (screen === 'ambassador') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-green-100 to-teal-100 p-4">
+                <div className="max-w-md mx-auto">
+                  
+                  {/* Activity Check Modal */}
+                  {showActivityCheck && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                      <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center animate-pulse">
+                        <div className="text-6xl mb-4">⏰</div>
+                        <h3 className="text-2xl font-bold mb-4 text-gray-800">Are you still here?</h3>
+                        <p className="text-gray-600 mb-6">
+                          Please confirm you're still available. No response in 5 minutes will remove you from the list.
+                        </p>
+                        <div className="space-y-3">
+                          <button 
+                            onClick={handleStillHere}
+                            className="w-full bg-gradient-to-r from-green-500 to-teal-500 text-white font-bold py-4 rounded-xl hover:shadow-lg"
+                          >
+                            ✅ Yes, I'm Still Here
+                          </button>
+                          <button 
+                            onClick={handleLeaving}
+                            className="w-full bg-gray-200 text-gray-700 font-bold py-4 rounded-xl hover:bg-gray-300"
+                          >
+                            ❌ No, I'm Leaving
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="bg-white rounded-3xl p-6 mb-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-xl font-bold text-gray-800">Ambassador Mode</h2>
+                      <div className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm flex items-center gap-2">
+                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                        Active
+                      </div>
+                    </div>
+                    <div className="bg-green-50 rounded-xl p-6">
+                      <p className="text-sm text-gray-600 mb-2">Your Profile:</p>
+                      <p className="text-4xl text-center mb-3">{myEmojis.join(' ')}</p>
+                      {showDescription && description && (
+                        <p className="text-sm text-gray-700 text-center italic mb-2">"{description}"</p>
+                      )}
+                      <div className="mt-3 space-y-1">
+                        {enableBLEFinder && (
+                          <div className="flex items-center justify-center gap-2 text-blue-600 text-sm font-semibold">
+                            <span>📡</span>
+                            <span>BLE Broadcasting Active</span>
+                          </div>
+                        )}
+                        <button
+                          onClick={generateQRCode}
+                          className="w-full bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold py-2 rounded-lg text-sm hover:shadow-lg transition-all"
+                        >
+                          📱 Show My QR Code
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {requests.length > 0 ? (
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-bold px-2 text-gray-800">
+                        🔔 New Requests ({requests.length})
+                      </h3>
+                      {requests.map(req => (
+                        <div key={req.id} className="bg-white rounded-2xl p-5 shadow-lg">
+                          <div className="flex items-start gap-4 mb-4">
+                            <div className="w-16 h-16 bg-gradient-to-br from-green-400 to-teal-400 rounded-full flex items-center justify-center text-3xl">
+                              👋
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-bold text-gray-800 mb-1">Someone wants to meet!</p>
+                              {req.profile?.emojis && (
+                                <p className="text-2xl mb-2">{req.profile.emojis.join(' ')}</p>
+                              )}
+                              {req.profile?.description && (
+                                <p className="text-sm text-gray-600 italic mb-1">"{req.profile.description}"</p>
+                              )}
+                              {req.profile?.instagram && (
+                                <p className="text-sm text-purple-600 font-semibold">@{req.profile.instagram}</p>
+                              )}
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => acceptRequest(req)} 
+                            className="w-full py-3 bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-xl font-bold hover:shadow-lg"
+                          >
+                            Accept Connection
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-2xl p-8 text-center">
+                      <div className="text-6xl mb-4">📡</div>
+                      <p className="text-gray-600 font-semibold">Waiting for applicants...</p>
+                      <p className="text-sm text-gray-400 mt-2">You're visible to others nearby</p>
+                      <p className="text-xs text-gray-400 mt-1">They'll get notified!</p>
+                    </div>
+                  )}
+
+                  <button 
+                    onClick={() => {
+                      database.ref('ambassadors/' + userId).remove();
+                      setScreen('home');
+                    }}
+                    className="w-full mt-4 bg-gray-200 py-3 rounded-xl text-gray-700"
+                  >
+                    Leave Ambassador Mode
+                  </button>
+                </div>
+              </div>
+            );
+          }
+
+          // APPLICANT SCREEN
+          if (screen === 'applicant') {
+            // Register user as potential applicant for notifications
+            useEffect(() => {
+              database.ref('users/' + userId).set({ 
+                lastActive: Date.now(),
+                mode: 'applicant'
+              });
+            }, []);
+
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-orange-100 to-pink-100 p-4">
+                <div className="max-w-md mx-auto">
+                  <div className="bg-white rounded-3xl p-6 mb-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h2 className="text-2xl font-bold text-gray-800">Ambassadors Nearby</h2>
+                        <p className="text-sm text-gray-600">Push notifications enabled</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-3xl font-bold text-green-600">{ambassadors.length}</p>
+                        <p className="text-xs text-gray-500">Available</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={startQRScanner}
+                      className="w-full bg-gradient-to-r from-blue-500 to-purple-500 text-white font-semibold py-3 rounded-xl hover:shadow-lg transition-all"
+                    >
+                      📷 Scan QR Code
+                    </button>
+                  </div>
+
+                  {ambassadors.length === 0 ? (
+                    <div className="bg-white rounded-3xl p-8 text-center">
+                      <div className="text-6xl mb-4">👀</div>
+                      <p className="text-gray-600 font-semibold mb-2">No ambassadors yet</p>
+                      <p className="text-sm text-gray-400 mb-2">You'll get notified when someone becomes available!</p>
+                      <p className="text-xs text-gray-500">Open another device and become an ambassador to test</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {ambassadors.map(amb => (
+                        <div 
+                          key={amb.id} 
+                          className="bg-white rounded-2xl p-5 shadow-lg"
+                        >
+                          <div className="flex items-start gap-4 mb-3">
+                            <div className="text-4xl">{amb.emojis[0]}</div>
+                            <div className="flex-1">
+                              <p className="font-bold text-lg mb-1">Anonymous</p>
+                              <p className="text-xl mb-2">{amb.emojis.join(' ')}</p>
+                              {amb.description && (
+                                <p className="text-sm text-gray-600 mb-2">"{amb.description}"</p>
+                              )}
+                              {amb.instagram && (
+                                <p className="text-sm text-purple-600 font-semibold mb-2">@{amb.instagram}</p>
+                              )}
+                              {amb.bleEnabled && (
+                                <p className="text-xs text-blue-600 font-semibold flex items-center gap-1">
+                                  <span>🧭</span> BLE direction finding available
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex gap-2">
+                            {amb.bleEnabled && (
+                              <button
+                                onClick={() => openBLEFinder(amb)}
+                                className="flex-1 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold py-3 rounded-xl hover:shadow-lg transition-all flex items-center justify-center gap-2"
+                              >
+                                🧭 Find
+                              </button>
+                            )}
+                            <button
+                              onClick={() => sendRequest(amb)}
+                              className="flex-1 bg-gradient-to-r from-green-500 to-orange-500 text-white font-bold py-3 rounded-xl hover:shadow-lg transition-all flex items-center justify-center gap-2"
+                            >
+                              ✋ Connect
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <button 
+                    onClick={() => setScreen('home')}
+                    className="w-full mt-4 bg-gray-200 py-3 rounded-xl text-gray-700"
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+            );
+          }
+
+          // QR CODE GENERATOR MODAL
+          if (showQRGenerator) {
+            return (
+              <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-3xl p-8 shadow-2xl">
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold text-gray-800">📱 My QR Code</h2>
+                    <button onClick={closeQRGenerator} className="text-gray-500 hover:text-gray-700 text-3xl">
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-2xl p-6 mb-6">
+                    <div className="bg-white rounded-xl p-6 mb-4 flex justify-center">
+                      <div ref={qrCodeRef}></div>
+                    </div>
+                    <p className="text-center text-sm text-gray-600">
+                      Others can scan this to see your profile
+                    </p>
+                  </div>
+
+                  <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4">
+                    <p className="text-sm text-blue-800">
+                      💡 Only information you've toggled "ON" in Represent will be shown
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={closeQRGenerator}
+                    className="w-full py-3 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl font-bold hover:shadow-lg"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            );
+          }
+
+          // QR CODE SCANNER MODAL
+          if (showQRScanner) {
+            return (
+              <div className="fixed inset-0 bg-black z-50 flex flex-col">
+                <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-4 flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-white">📷 Scan QR Code</h2>
+                  <button onClick={closeQRScanner} className="text-white text-3xl hover:text-gray-200">
+                    ×
+                  </button>
+                </div>
+
+                <div className="flex-1 flex items-center justify-center">
+                  <div id="qr-reader" className="w-full max-w-md"></div>
+                </div>
+
+                <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-4">
+                  <p className="text-white text-center text-sm">
+                    Point camera at a Likable QR code
+                  </p>
+                </div>
+              </div>
+            );
+          }
+
+          // SCANNED PROFILE SCREEN
+          if (screen === 'scannedProfile') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-purple-100 to-blue-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-3xl p-8 text-center">
+                  <div className="text-6xl mb-6">📱</div>
+                  <h2 className="text-3xl font-bold mb-4 text-gray-800">Scanned Profile</h2>
+                  
+                  <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl p-8 mb-6">
+                    <p className="text-5xl mb-4">{connectedProfile?.emojis?.join(' ')}</p>
+                    
+                    {connectedProfile?.description && (
+                      <p className="text-gray-700 italic mb-4">"{connectedProfile.description}"</p>
+                    )}
+                    
+                    <div className="space-y-2 text-sm">
+                      {connectedProfile?.instagram && (
+                        <button
+                          onClick={() => openInstagram(connectedProfile.instagram)}
+                          className="w-full bg-purple-100 text-purple-700 font-semibold py-2 px-4 rounded-lg hover:bg-purple-200 transition-all"
+                        >
+                          📸 @{connectedProfile.instagram}
+                        </button>
+                      )}
+                      {connectedProfile?.linkedin && (
+                        <button
+                          onClick={() => openLinkedin(connectedProfile.linkedin)}
+                          className="w-full bg-blue-100 text-blue-700 font-semibold py-2 px-4 rounded-lg hover:bg-blue-200 transition-all"
+                        >
+                          💼 in/{connectedProfile.linkedin}
+                        </button>
+                      )}
+                      {connectedProfile?.twitter && (
+                        <button
+                          onClick={() => openTwitter(connectedProfile.twitter)}
+                          className="w-full bg-sky-100 text-sky-700 font-semibold py-2 px-4 rounded-lg hover:bg-sky-200 transition-all"
+                        >
+                          🐦 @{connectedProfile.twitter}
+                        </button>
+                      )}
+                      {connectedProfile?.email && (
+                        <a
+                          href={`mailto:${connectedProfile.email}`}
+                          className="block w-full bg-gray-100 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-200 transition-all"
+                        >
+                          📧 {connectedProfile.email}
+                        </a>
+                      )}
+                      {connectedProfile?.phoneNumber && (
+                        <a
+                          href={`tel:${connectedProfile.phoneNumber}`}
+                          className="block w-full bg-gray-100 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-200 transition-all"
+                        >
+                          📱 {connectedProfile.phoneNumber}
+                        </a>
+                      )}
+                      {connectedProfile?.website && (
+                        <a
+                          href={connectedProfile.website}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block w-full bg-gray-100 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-200 transition-all"
+                        >
+                          🌐 Website
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => {
+                      setScreen('home');
+                      setConnectedProfile(null);
+                    }}
+                    className="w-full bg-gradient-to-r from-purple-500 to-blue-500 text-white font-bold py-4 rounded-xl text-lg hover:shadow-lg"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            );
+          }
+
+          // BLE FINDER MODAL
+          if (showBLEFinder && bleFinderTarget) {
+            const arrowRotation = bestHeading - currentHeading;
+
+            return (
+              <div className="fixed inset-0 bg-gradient-to-br from-purple-600 to-blue-600 z-50 flex items-center justify-center p-4">
+                <div className="max-w-md w-full">
+                  <div className="bg-white rounded-3xl p-8 shadow-2xl">
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-2xl font-bold text-gray-800">🧭 Finding...</h2>
+                      <button onClick={closeBLEFinder} className="text-gray-500 hover:text-gray-700 text-3xl">
+                        ×
+                      </button>
+                    </div>
+
+                    <div className="text-center mb-4">
+                      <p className="text-xl font-bold">{bleFinderTarget.emojis.join(' ')}</p>
+                      <p className="text-sm text-gray-600">Anonymous</p>
+                    </div>
+
+                    {/* Arrow */}
+                    <div className="flex justify-center items-center my-8" style={{height: '200px'}}>
+                      <svg 
+                        width="150" 
+                        height="150" 
+                        viewBox="0 0 100 100"
+                        style={{transform: `rotate(${arrowRotation}deg)`, transition: 'transform 0.3s ease'}}
+                      >
+                        <defs>
+                          <linearGradient id="arrowGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" style={{stopColor: bestRSSI > -70 ? '#10b981' : bestRSSI > -85 ? '#f59e0b' : '#ef4444', stopOpacity: 1}} />
+                            <stop offset="100%" style={{stopColor: bestRSSI > -70 ? '#059669' : bestRSSI > -85 ? '#d97706' : '#dc2626', stopOpacity: 1}} />
+                          </linearGradient>
+                        </defs>
+                        <path d="M50,10 L65,40 L55,40 L55,90 L45,90 L45,40 L35,40 Z" 
+                              fill="url(#arrowGradient)" stroke="#fff" strokeWidth="2"/>
+                        <circle cx="50" cy="50" r="45" fill="none" stroke="#667eea" 
+                                strokeWidth="2" strokeDasharray="5,5" opacity="0.3"/>
+                      </svg>
+                    </div>
+
+                    {/* Distance */}
+                    <div className="text-center mb-4">
+                      <div className="text-5xl font-bold text-purple-600 mb-2">{bleDistance}</div>
+                      <div className="text-sm text-gray-600">Signal: {bestRSSI} dBm</div>
+                      <div className="text-xs text-gray-400 mt-1">Heading: {Math.round(currentHeading)}°</div>
+                    </div>
+
+                    {/* Instructions */}
+                    <div className="bg-blue-50 rounded-xl p-4 mb-4">
+                      <p className="text-sm text-blue-800">
+                        {isScanning ? (
+                          <>🔄 <strong>Rotate slowly</strong> in a full circle to calibrate</>
+                        ) : (
+                          <>📱 Tap "Start Scanning" to begin</>
+                        )}
+                      </p>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="space-y-2">
+                      {!isScanning ? (
+                        <button 
+                          onClick={startBLEScanning}
+                          className="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-xl font-bold hover:shadow-lg"
+                        >
+                          Start Scanning
+                        </button>
+                      ) : (
+                        <>
+                          <button 
+                            onClick={stopBLEScanning}
+                            className="w-full py-3 bg-gradient-to-r from-red-500 to-pink-500 text-white rounded-xl font-bold hover:shadow-lg"
+                          >
+                            Stop Scanning
+                          </button>
+                          <button 
+                            onClick={resetBLECalibration}
+                            className="w-full py-3 bg-gray-200 text-gray-700 rounded-xl font-semibold"
+                          >
+                            Reset Calibration
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="mt-4 text-center">
+                      <button 
+                        onClick={closeBLEFinder}
+                        className="text-gray-500 hover:text-gray-700 text-sm"
+                      >
+                        Close Finder
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // PENDING SCREEN
+          if (screen === 'pending') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-orange-100 to-green-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-3xl p-8 text-center">
+                  <div className="text-7xl mb-6 animate-pulse">⏳</div>
+                  <h2 className="text-3xl font-bold mb-4 text-gray-800">Requesting...</h2>
+                  <p className="text-gray-600 mb-2">Waiting for them to accept your request</p>
+                  <p className="text-sm text-gray-500 mb-6">They'll get a push notification!</p>
+                  <div className="bg-gray-50 rounded-xl p-6">
+                    <p className="text-5xl mb-3">{selected?.emojis?.join(' ')}</p>
+                    {selected?.description && (
+                      <p className="text-sm text-gray-600 italic">"{selected.description}"</p>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-400 mt-4">This may take a moment...</p>
+                </div>
+              </div>
+            );
+          }
+
+          // CONNECTED SCREEN
+          if (screen === 'connected') {
+            return (
+              <div className="min-h-screen bg-gradient-to-br from-orange-100 to-green-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-3xl p-8 text-center">
+                  <div className="text-8xl mb-6">✅</div>
+                  <h2 className="text-4xl font-bold mb-4 text-gray-800">Connected! 🎉</h2>
+                  <p className="text-gray-600 mb-8 text-lg">You're matched with:</p>
+                  
+                  <div className="bg-gradient-to-r from-green-50 to-orange-50 rounded-xl p-8 mb-6">
+                    <p className="font-bold text-xl mb-3">Anonymous</p>
+                    <p className="text-6xl mb-4">{connectedProfile?.emojis?.join(' ')}</p>
+                    {connectedProfile?.description && (
+                      <p className="text-gray-700 italic mb-4">"{connectedProfile.description}"</p>
+                    )}
+                    
+                    <div className="mt-6 pt-6 border-t-2 border-gray-200 space-y-2">
+                      {connectedProfile?.instagram && (
+                        <button
+                          onClick={() => openInstagram(connectedProfile.instagram)}
+                          className="w-full bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold py-3 rounded-xl hover:shadow-lg transition-all"
+                        >
+                          📸 @{connectedProfile.instagram}
+                        </button>
+                      )}
+                      {connectedProfile?.linkedin && (
+                        <button
+                          onClick={() => openLinkedin(connectedProfile.linkedin)}
+                          className="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white font-bold py-3 rounded-xl hover:shadow-lg transition-all"
+                        >
+                          💼 LinkedIn Profile
+                        </button>
+                      )}
+                      {connectedProfile?.twitter && (
+                        <button
+                          onClick={() => openTwitter(connectedProfile.twitter)}
+                          className="w-full bg-gradient-to-r from-sky-500 to-blue-500 text-white font-bold py-3 rounded-xl hover:shadow-lg transition-all"
+                        >
+                          🐦 @{connectedProfile.twitter}
+                        </button>
+                      )}
+                      {connectedProfile?.email && (
+                        <a
+                          href={`mailto:${connectedProfile.email}`}
+                          className="block w-full bg-gray-600 text-white font-bold py-3 rounded-xl hover:bg-gray-700 transition-all"
+                        >
+                          📧 Send Email
+                        </a>
+                      )}
+                      {connectedProfile?.phoneNumber && (
+                        <a
+                          href={`tel:${connectedProfile.phoneNumber}`}
+                          className="block w-full bg-green-600 text-white font-bold py-3 rounded-xl hover:bg-green-700 transition-all"
+                        >
+                          📱 Call Now
+                        </a>
+                      )}
+                      {connectedProfile?.website && (
+                        <a
+                          href={connectedProfile.website}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition-all"
+                        >
+                          🌐 Visit Website
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-6">
+                    <p className="text-sm text-blue-800">
+                      💬 Say "Hi, I saw your hand!" to break the ice
+                    </p>
+                  </div>
+
+                  <button 
+                    onClick={() => setScreen('home')}
+                    className="w-full bg-gradient-to-r from-green-500 to-orange-500 text-white font-bold py-4 rounded-xl text-lg hover:shadow-lg"
+                  >
+                    Done! ✨
+                  </button>
+                </div>
+              </div>
+            );
+          }
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
